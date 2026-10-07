@@ -1,8 +1,10 @@
 import pygame
+import math
+from array import array
+
 from .marble import Marble
 from .wall import Wall
 
-# Game Engine
 
 WHITE = (255, 255, 255)
 DARK = (40, 40, 50)
@@ -18,10 +20,8 @@ class GameEngine:
 
         self.start_x = 50
         self.start_y = 50
-
         self.marble = Marble(self.start_x, self.start_y)
 
-        # Medium difficulty is the original setting.
         self.tilt_strength = 0.6
         self.friction = 0.02
         self.max_speed = 9
@@ -49,11 +49,10 @@ class GameEngine:
         self.in_replay_menu = False
 
         self.walls = self._build_maze()
-        self.goal_x, self.goal_y, self.goal_radius = (
-            width - 60,
-            height - 60,
-            22,
-        )
+
+        self.goal_x = width - 60
+        self.goal_y = height - 60
+        self.goal_radius = 22
 
         self.time_limit_ms = 45000
         self.start_ticks = pygame.time.get_ticks()
@@ -65,17 +64,361 @@ class GameEngine:
         self.finish_time_ms = None
         self.should_exit = False
 
+        # Task 4: Sound Feedback
+        self.sound_enabled = False
+        self.bounce_sound = None
+        self.goal_sound = None
+        self.timeout_sound = None
+        self.audio_error = None
+
+        self._init_sounds()
+
+    def _init_sounds(self):
+        """
+        Initialize the Pygame mixer safely and create all
+        Task 4 sounds using the active mixer format.
+        """
+        try:
+            mixer_info = pygame.mixer.get_init()
+
+            if mixer_info is None:
+                pygame.mixer.init(
+                    frequency=44100,
+                    size=-16,
+                    channels=2,
+                    buffer=512,
+                )
+
+                mixer_info = pygame.mixer.get_init()
+
+            if mixer_info is None:
+                raise pygame.error(
+                    "Pygame mixer could not be initialized."
+                )
+
+            sample_rate, sample_size, channels = mixer_info
+
+            if sample_size != -16:
+                raise pygame.error(
+                    f"Unsupported mixer sample format: {sample_size}"
+                )
+
+            if channels != 2:
+                raise pygame.error(
+                    f"Unsupported mixer channel count: {channels}"
+                )
+
+            self.bounce_sound = self._create_tone(
+                frequency=260,
+                duration=0.09,
+                volume=0.85,
+            )
+
+            self.goal_sound = self._create_goal_sound()
+
+            self.timeout_sound = self._create_timeout_sound()
+
+            if self.bounce_sound is None:
+                raise pygame.error(
+                    "Bounce sound creation failed."
+                )
+
+            if self.goal_sound is None:
+                raise pygame.error(
+                    "Goal sound creation failed."
+                )
+
+            if self.timeout_sound is None:
+                raise pygame.error(
+                    "Timeout sound creation failed."
+                )
+
+            self.bounce_sound.set_volume(1.0)
+            self.goal_sound.set_volume(1.0)
+            self.timeout_sound.set_volume(1.0)
+
+            self.sound_enabled = True
+            self.audio_error = None
+
+        except (
+            pygame.error,
+            OSError,
+            ValueError,
+            OverflowError,
+        ) as error:
+            self.audio_error = str(error)
+
+            self.sound_enabled = False
+            self.bounce_sound = None
+            self.goal_sound = None
+            self.timeout_sound = None
+
+            print(
+                "Task 4 audio unavailable:",
+                self.audio_error
+            )
+
+    def _create_tone(self, frequency, duration, volume):
+        """
+        Generate a short stereo 16-bit sine-wave Pygame Sound.
+
+        The generated PCM data matches the active mixer format.
+        """
+        mixer_info = pygame.mixer.get_init()
+
+        if mixer_info is None:
+            raise pygame.error(
+                "Pygame mixer is not initialized."
+            )
+
+        sample_rate, sample_size, channels = mixer_info
+
+        if sample_size != -16:
+            raise pygame.error(
+                "Tone generator requires signed 16-bit audio."
+            )
+
+        if channels != 2:
+            raise pygame.error(
+                "Tone generator requires stereo audio."
+            )
+
+        sample_count = max(
+            1,
+            int(sample_rate * duration)
+        )
+
+        samples = array("h")
+
+        for i in range(sample_count):
+            time_value = i / sample_rate
+
+            fade = 1.0 - (
+                i / sample_count
+            )
+
+            main_wave = math.sin(
+                2
+                * math.pi
+                * frequency
+                * time_value
+            )
+
+            harmonic = 0.20 * math.sin(
+                2
+                * math.pi
+                * frequency
+                * 2
+                * time_value
+            )
+
+            sample_value = (
+                main_wave + harmonic
+            )
+
+            sample_value *= (
+                32767
+                * volume
+                * fade
+            )
+
+            sample_value = max(
+                -32768,
+                min(32767, int(sample_value))
+            )
+
+            samples.append(sample_value)
+            samples.append(sample_value)
+
+        sound = pygame.mixer.Sound(
+            buffer=samples.tobytes()
+        )
+
+        return sound
+
+    def _create_goal_sound(self):
+        """
+        Generate a short ascending two-tone sound for reaching
+        the goal.
+        """
+        mixer_info = pygame.mixer.get_init()
+
+        if mixer_info is None:
+            raise pygame.error(
+                "Pygame mixer is not initialized."
+            )
+
+        sample_rate, sample_size, channels = mixer_info
+
+        if sample_size != -16 or channels != 2:
+            raise pygame.error(
+                "Goal sound requires 16-bit stereo audio."
+            )
+
+        duration = 0.30
+        sample_count = int(
+            sample_rate * duration
+        )
+
+        samples = array("h")
+
+        for i in range(sample_count):
+            time_value = i / sample_rate
+
+            if time_value < 0.15:
+                frequency = 520
+            else:
+                frequency = 780
+
+            fade = 1.0 - (
+                i / sample_count
+            )
+
+            wave = math.sin(
+                2
+                * math.pi
+                * frequency
+                * time_value
+            )
+
+            harmonic = 0.15 * math.sin(
+                2
+                * math.pi
+                * frequency
+                * 2
+                * time_value
+            )
+
+            sample_value = (
+                wave + harmonic
+            )
+
+            sample_value *= (
+                32767
+                * 0.80
+                * fade
+            )
+
+            sample_value = max(
+                -32768,
+                min(32767, int(sample_value))
+            )
+
+            samples.append(sample_value)
+            samples.append(sample_value)
+
+        sound = pygame.mixer.Sound(
+            buffer=samples.tobytes()
+        )
+
+        return sound
+
+    def _create_timeout_sound(self):
+        """
+        Generate a short descending sound for timer expiration.
+        """
+        mixer_info = pygame.mixer.get_init()
+
+        if mixer_info is None:
+            raise pygame.error(
+                "Pygame mixer is not initialized."
+            )
+
+        sample_rate, sample_size, channels = mixer_info
+
+        if sample_size != -16 or channels != 2:
+            raise pygame.error(
+                "Timeout sound requires 16-bit stereo audio."
+            )
+
+        duration = 0.40
+        sample_count = int(
+            sample_rate * duration
+        )
+
+        samples = array("h")
+
+        for i in range(sample_count):
+            time_value = i / sample_rate
+
+            progress = i / sample_count
+
+            frequency = (
+                360
+                - 180 * progress
+            )
+
+            fade = 1.0 - progress
+
+            wave = math.sin(
+                2
+                * math.pi
+                * frequency
+                * time_value
+            )
+
+            harmonic = 0.15 * math.sin(
+                2
+                * math.pi
+                * frequency
+                * 2
+                * time_value
+            )
+
+            sample_value = (
+                wave + harmonic
+            )
+
+            sample_value *= (
+                32767
+                * 0.80
+                * fade
+            )
+
+            sample_value = max(
+                -32768,
+                min(32767, int(sample_value))
+            )
+
+            samples.append(sample_value)
+            samples.append(sample_value)
+
+        sound = pygame.mixer.Sound(
+            buffer=samples.tobytes()
+        )
+
+        return sound
+
+    def _play_sound(self, sound):
+        """
+        Safely play a Task 4 sound.
+
+        Audio failures never stop the game.
+        """
+        if sound is None:
+            return
+
+        try:
+            if pygame.mixer.get_init() is None:
+                return
+
+            sound.play()
+
+        except (
+            pygame.error,
+            OSError,
+        ) as error:
+            self.audio_error = str(error)
+
     def _build_maze(self):
         walls = []
         t = 16
 
-        # outer boundary
         walls.append(Wall(0, 0, self.width, t))
         walls.append(Wall(0, self.height - t, self.width, t))
         walls.append(Wall(0, 0, t, self.height))
         walls.append(Wall(self.width - t, 0, t, self.height))
 
-        # internal walls
         walls.append(Wall(0, 140, self.width - 140, t))
         walls.append(Wall(140, 260, self.width - 140, t))
         walls.append(Wall(0, 380, self.width - 140, t))
@@ -87,14 +430,12 @@ class GameEngine:
             self.should_exit = True
             return
 
-        # After game over, ENTER opens the replay menu.
         if self.game_over and not self.in_replay_menu:
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
                     self.in_replay_menu = True
             return
 
-        # Handle replay menu.
         if self.in_replay_menu:
             self._handle_replay_menu_input(event)
             return
@@ -114,7 +455,9 @@ class GameEngine:
             ) % len(self.menu_options)
 
         elif event.key == pygame.K_RETURN:
-            selected = self.menu_options[self.selected_option]
+            selected = self.menu_options[
+                self.selected_option
+            ]
 
             if selected == "Exit":
                 self.should_exit = True
@@ -124,24 +467,20 @@ class GameEngine:
     def _start_new_game(self, difficulty):
         settings = self.difficulties[difficulty]
 
-        # Apply difficulty settings.
         self.tilt_strength = settings["tilt_strength"]
         self.friction = settings["friction"]
         self.time_limit_ms = settings["time_limit_ms"]
 
-        # Reset marble.
         self.marble.x = self.start_x
         self.marble.y = self.start_y
         self.marble.vx = 0
         self.marble.vy = 0
 
-        # Reset game state.
         self.game_over = False
         self.result = None
         self.finish_time_ms = None
         self.in_replay_menu = False
 
-        # Restart timer.
         self.start_ticks = pygame.time.get_ticks()
 
     def handle_input(self):
@@ -149,9 +488,14 @@ class GameEngine:
             return
 
         mouse_x, mouse_y = pygame.mouse.get_pos()
+
         dx = mouse_x - self.width // 2
         dy = mouse_y - self.height // 2
-        dist = max(1, (dx ** 2 + dy ** 2) ** 0.5)
+
+        dist = max(
+            1,
+            (dx ** 2 + dy ** 2) ** 0.5
+        )
 
         ax = (dx / dist) * self.tilt_strength
         ay = (dy / dist) * self.tilt_strength
@@ -163,15 +507,28 @@ class GameEngine:
         if self.game_over or self.in_replay_menu:
             return
 
-        elapsed = pygame.time.get_ticks() - self.start_ticks
+        elapsed = (
+            pygame.time.get_ticks()
+            - self.start_ticks
+        )
 
         if elapsed >= self.time_limit_ms:
             self.game_over = True
             self.result = "timeout"
+
+            self._play_sound(
+                self.timeout_sound
+            )
+
             return
 
-        self.marble.vx *= (1 - self.friction)
-        self.marble.vy *= (1 - self.friction)
+        self.marble.vx *= (
+            1 - self.friction
+        )
+
+        self.marble.vy *= (
+            1 - self.friction
+        )
 
         speed = (
             self.marble.vx ** 2
@@ -179,7 +536,11 @@ class GameEngine:
         ) ** 0.5
 
         if speed > self.max_speed:
-            scale = self.max_speed / speed
+            scale = (
+                self.max_speed
+                / speed
+            )
+
             self.marble.vx *= scale
             self.marble.vy *= scale
 
@@ -191,10 +552,18 @@ class GameEngine:
         gx = self.goal_x - self.marble.x
         gy = self.goal_y - self.marble.y
 
-        if (gx ** 2 + gy ** 2) ** 0.5 <= self.goal_radius:
+        if (
+            gx ** 2
+            + gy ** 2
+        ) ** 0.5 <= self.goal_radius:
+
             self.game_over = True
             self.result = "solved"
             self.finish_time_ms = elapsed
+
+            self._play_sound(
+                self.goal_sound
+            )
 
     def _resolve_wall_collisions(self):
         for wall in self.walls:
@@ -204,101 +573,144 @@ class GameEngine:
             cy = self.marble.y
             radius = self.marble.radius
 
-            # Find the closest point on the wall rectangle
-            # to the center of the marble.
-            closest_x = max(wall_rect.left, min(cx, wall_rect.right))
-            closest_y = max(wall_rect.top, min(cy, wall_rect.bottom))
+            closest_x = max(
+                wall_rect.left,
+                min(cx, wall_rect.right)
+            )
+
+            closest_y = max(
+                wall_rect.top,
+                min(cy, wall_rect.bottom)
+            )
 
             dx = cx - closest_x
             dy = cy - closest_y
+
             distance_squared = dx * dx + dy * dy
 
-            # No collision if the marble is outside the wall.
             if distance_squared > radius * radius:
                 continue
 
-            # Handle the case where the marble center is inside the wall.
             if distance_squared == 0:
                 left = cx - wall_rect.left
                 right = wall_rect.right - cx
                 top = cy - wall_rect.top
                 bottom = wall_rect.bottom - cy
 
-                min_distance = min(left, right, top, bottom)
+                min_distance = min(
+                    left,
+                    right,
+                    top,
+                    bottom
+                )
 
                 if min_distance == left:
                     normal_x, normal_y = -1, 0
                     penetration = radius + left
+
                 elif min_distance == right:
                     normal_x, normal_y = 1, 0
                     penetration = radius + right
+
                 elif min_distance == top:
                     normal_x, normal_y = 0, -1
                     penetration = radius + top
+
                 else:
                     normal_x, normal_y = 0, 1
                     penetration = radius + bottom
+
             else:
                 distance = distance_squared ** 0.5
+
                 normal_x = dx / distance
                 normal_y = dy / distance
+
                 penetration = radius - distance
 
-            # Push the marble outside the wall.
             self.marble.x += normal_x * penetration
             self.marble.y += normal_y * penetration
 
-            # Calculate velocity toward the wall.
             velocity_into_wall = (
                 self.marble.vx * normal_x
                 + self.marble.vy * normal_y
             )
 
-            # Bounce only if the marble is moving into the wall.
             if velocity_into_wall < 0:
                 self.marble.vx -= (
-                    1.3 * velocity_into_wall * normal_x
+                    1.3
+                    * velocity_into_wall
+                    * normal_x
                 )
+
                 self.marble.vy -= (
-                    1.3 * velocity_into_wall * normal_y
+                    1.3
+                    * velocity_into_wall
+                    * normal_y
+                )
+
+                self._play_sound(
+                    self.bounce_sound
                 )
 
     def render(self, screen):
+        screen.fill(DARK)
+
         if self.in_replay_menu:
             self._render_replay_menu(screen)
             return
 
-        screen.fill(DARK)
-
         for wall in self.walls:
-            pygame.draw.rect(screen, WALL_COLOR, wall.rect())
+            pygame.draw.rect(
+                screen,
+                WALL_COLOR,
+                wall.rect()
+            )
 
         pygame.draw.circle(
             screen,
             GOAL_COLOR,
-            (self.goal_x, self.goal_y),
-            self.goal_radius,
+            (
+                int(self.goal_x),
+                int(self.goal_y)
+            ),
+            self.goal_radius
         )
 
         pygame.draw.circle(
             screen,
             WHITE,
-            (int(self.marble.x), int(self.marble.y)),
-            self.marble.radius,
+            (
+                int(self.marble.x),
+                int(self.marble.y)
+            ),
+            self.marble.radius
         )
 
-        elapsed = pygame.time.get_ticks() - self.start_ticks
-        seconds_left = max(
-            0,
-            (self.time_limit_ms - elapsed) // 1000,
-        )
+        if not self.game_over:
+            elapsed = (
+                pygame.time.get_ticks()
+                - self.start_ticks
+            )
 
-        timer_text = self.font.render(
-            f"Time: {seconds_left}s",
-            True,
-            WHITE,
-        )
-        screen.blit(timer_text, (10, 10))
+            remaining = max(
+                0,
+                (
+                    self.time_limit_ms
+                    - elapsed
+                ) / 1000
+            )
+
+            timer_text = self.font.render(
+                f"Time: {remaining:.1f}s",
+                True,
+                WHITE
+            )
+
+            screen.blit(
+                timer_text,
+                (20, 20)
+            )
 
         if self.game_over:
             self._render_game_over(screen)
@@ -306,111 +718,139 @@ class GameEngine:
     def _render_game_over(self, screen):
         overlay = pygame.Surface(
             (self.width, self.height),
-            pygame.SRCALPHA,
+            pygame.SRCALPHA
         )
-        overlay.fill((0, 0, 0, 180))
-        screen.blit(overlay, (0, 0))
+
+        overlay.fill(
+            (0, 0, 0, 180)
+        )
+
+        screen.blit(
+            overlay,
+            (0, 0)
+        )
 
         if self.result == "solved":
-            title_text = self.font.render(
+            seconds = (
+                self.finish_time_ms
+                / 1000
+            )
+
+            title = self.font.render(
                 "Maze Solved!",
                 True,
-                WHITE,
+                GOAL_COLOR
             )
 
-            time_text = self.font.render(
-                f"Finished in {self.finish_time_ms / 1000:.1f}s",
+            details = self.font.render(
+                f"Finish Time: {seconds:.2f}s",
                 True,
-                WHITE,
+                WHITE
             )
+
         else:
-            title_text = self.font.render(
+            title = self.font.render(
                 "Time's Up!",
                 True,
-                WHITE,
+                WHITE
             )
 
-            time_text = self.font.render(
-                "Maze not solved.",
+            details = self.font.render(
+                "You ran out of time.",
                 True,
-                WHITE,
+                WHITE
             )
 
-        prompt_text = self.font.render(
+        prompt = self.font.render(
             "Press ENTER to continue",
             True,
-            WHITE,
+            WHITE
         )
 
-        title_rect = title_text.get_rect(
-            center=(self.width // 2, self.height // 2 - 50)
+        screen.blit(
+            title,
+            title.get_rect(
+                center=(
+                    self.width // 2,
+                    190
+                )
+            )
         )
 
-        time_rect = time_text.get_rect(
-            center=(self.width // 2, self.height // 2)
+        screen.blit(
+            details,
+            details.get_rect(
+                center=(
+                    self.width // 2,
+                    235
+                )
+            )
         )
 
-        prompt_rect = prompt_text.get_rect(
-            center=(self.width // 2, self.height // 2 + 50)
+        screen.blit(
+            prompt,
+            prompt.get_rect(
+                center=(
+                    self.width // 2,
+                    290
+                )
+            )
         )
-
-        screen.blit(title_text, title_rect)
-        screen.blit(time_text, time_rect)
-        screen.blit(prompt_text, prompt_rect)
 
     def _render_replay_menu(self, screen):
-        screen.fill(DARK)
-
-        title_font = pygame.font.SysFont("Arial", 42)
-        option_font = pygame.font.SysFont("Arial", 30)
-        info_font = pygame.font.SysFont("Arial", 20)
-
-        title = title_font.render(
+        title = self.font.render(
             "Play Again?",
             True,
-            WHITE,
+            WHITE
         )
 
-        title_rect = title.get_rect(
-            center=(self.width // 2, 80)
+        screen.blit(
+            title,
+            title.get_rect(
+                center=(
+                    self.width // 2,
+                    120
+                )
+            )
         )
 
-        screen.blit(title, title_rect)
-
-        for index, option in enumerate(self.menu_options):
-            selected = index == self.selected_option
-
+        for index, option in enumerate(
+            self.menu_options
+        ):
             color = (
                 SELECTED_COLOR
-                if selected
+                if index == self.selected_option
                 else WHITE
             )
 
-            prefix = "> " if selected else "  "
-
-            option_surface = option_font.render(
-                prefix + option,
+            text = self.font.render(
+                option,
                 True,
-                color,
+                color
             )
 
-            option_rect = option_surface.get_rect(
-                center=(
-                    self.width // 2,
-                    160 + index * 55,
+            screen.blit(
+                text,
+                text.get_rect(
+                    center=(
+                        self.width // 2,
+                        180 + index * 50
+                    )
                 )
             )
 
-            screen.blit(option_surface, option_rect)
-
-        info = info_font.render(
-            "Use UP/DOWN to choose and ENTER to select",
+        instructions = self.font.render(
+            "UP/DOWN to select, ENTER to confirm",
             True,
-            WHITE,
+            WHITE
         )
 
-        info_rect = info.get_rect(
-            center=(self.width // 2, 410)
+        screen.blit(
+            instructions,
+            instructions.get_rect(
+                center=(
+                    self.width // 2,
+                    410
+                )
+            )
         )
-
-        screen.blit(info, info_rect)
